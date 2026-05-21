@@ -1,77 +1,157 @@
 // Workshop "Từ Ý Tưởng Thành Website" – Google Apps Script
+// Dán toàn bộ code này vào Apps Script Editor, sau đó Deploy lại → Web App
+
+const SHEET_NAME = 'Đăng ký';
+const SEPAY_API  = 'https://pay.sepay.vn/v1/checkout/init';
+
+function getCreds() {
+  const props = PropertiesService.getScriptProperties();
+  return {
+    merchantId: props.getProperty('SEPAY_MERCHANT_ID'),
+    secretKey:  props.getProperty('SEPAY_SECRET_KEY'),
+  };
+}
 
 function doGet(e) {
-  var action = e.parameter.action;
+  const p = e.parameter;
 
   // ── CHECK PAYMENT STATUS (landing page polling) ──
-  if (action === 'check') {
-    var code = e.parameter.code || '';
-    if (!code) return json({paid: false});
-
-    var sheet = SpreadsheetApp.getActiveSheet();
-    var data  = sheet.getDataRange().getValues();
-    for (var i = 1; i < data.length; i++) {
+  if (p.action === 'check') {
+    const code = p.code || '';
+    if (!code) return jsonResponse({paid: false});
+    const sheet = getOrCreateSheet();
+    const data  = sheet.getDataRange().getValues();
+    for (let i = 1; i < data.length; i++) {
       if (data[i][5] === code) {
-        return json({paid: data[i][6] === 'Đã thanh toán'});
+        return jsonResponse({paid: data[i][6] === 'Đã thanh toán ✅'});
       }
     }
-    return json({paid: false});
+    return jsonResponse({paid: false});
   }
 
   // ── REGISTER ──
-  var name  = (e.parameter.name  || '').trim();
-  var phone = (e.parameter.phone || '').trim();
-  var email = (e.parameter.email || '').trim();
-  var job   = (e.parameter.job   || '').trim();
-
-  if (!name || !phone || !email) {
-    return json({error: 'missing fields'});
+  if (p && p.name && p.name.trim() && p.email && p.email.trim() && p.phone && p.phone.trim()) {
+    return handleFormSubmit(p);
   }
 
-  var code  = 'WS' + Math.random().toString(36).substring(2, 8).toUpperCase();
-  var sheet = SpreadsheetApp.getActiveSheet();
-  sheet.appendRow([new Date(), name, email, phone, job, code, 'Chờ thanh toán', '', '']);
-
-  return json({success: true, code: code});
+  return jsonResponse({ok: true});
 }
 
 function doPost(e) {
   try {
-    var body   = JSON.parse(e.postData.contents);
-    var desc   = (body.description || body.content || '').toUpperCase();
-    var amount = body.transferAmount || body.amount || 0;
-    var time   = body.transactionDate || new Date().toISOString();
-
-    var match = desc.match(/WS[A-Z0-9]{6}/);
-    if (!match) return json({status: 'no match'});
-
-    var code  = match[0];
-    var sheet = SpreadsheetApp.getActiveSheet();
-    var data  = sheet.getDataRange().getValues();
-
-    for (var i = 1; i < data.length; i++) {
-      if (data[i][5] === code) {
-        sheet.getRange(i + 1, 7).setValue('Đã thanh toán');
-        sheet.getRange(i + 1, 8).setValue(time);
-        sheet.getRange(i + 1, 9).setValue(amount);
-        break;
-      }
+    if (e.postData.type === 'application/x-www-form-urlencoded') {
+      return handleFormSubmit(e.parameter);
     }
 
-    return json({status: 'ok'});
+    const data = JSON.parse(e.postData.contents);
+
+    if (data.transferType || data.content || data.notification_type === 'ORDER_PAID') {
+      return handleSePayWebhook(data);
+    }
+    return handleRegistrationJson(data);
+
   } catch (err) {
     Logger.log('doPost error: ' + err.toString());
-    return json({error: err.toString()});
+    return jsonResponse({ result: 'error', message: err.toString() });
   }
 }
 
-function json(obj) {
-  return ContentService.createTextOutput(JSON.stringify(obj))
+// ── Xử lý form submit: lưu sheet + trả JSON có code ──
+function handleFormSubmit(params) {
+  const orderId = 'WS-' + Date.now();
+  const sheet   = getOrCreateSheet();
+
+  sheet.appendRow([
+    new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }),
+    params.name  || '',
+    params.email || '',
+    params.phone || '',
+    params.job   || '',
+    orderId,
+    'Chờ thanh toán',
+  ]);
+
+  return jsonResponse({ success: true, code: orderId });
+}
+
+function handleRegistrationJson(data) {
+  const sheet   = getOrCreateSheet();
+  const orderId = 'WS-' + Date.now();
+
+  sheet.appendRow([
+    new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }),
+    data.name  || '',
+    data.email || '',
+    data.phone || '',
+    data.job   || '',
+    orderId,
+    'Chờ thanh toán',
+  ]);
+
+  return jsonResponse({ result: 'success' });
+}
+
+function handleSePayWebhook(data) {
+  const raw =
+    (data.content) ||
+    (data.code)    ||
+    (data.order && data.order.orderInvoiceNumber) ||
+    '';
+
+  const match = raw.toString().match(/WS-\d+/);
+  const orderId = match ? match[0] : null;
+
+  if (orderId) {
+    updatePaymentStatus(orderId, 'Đã thanh toán ✅');
+  }
+
+  Logger.log('Webhook received: ' + JSON.stringify(data));
+  Logger.log('orderId extracted: ' + orderId);
+
+  return jsonResponse({ result: 'success' });
+}
+
+function updatePaymentStatus(orderId, status) {
+  const sheet     = getOrCreateSheet();
+  const lastRow   = sheet.getLastRow();
+  const orderCol  = 6;
+  const statusCol = 7;
+
+  for (let i = 2; i <= lastRow; i++) {
+    if (sheet.getRange(i, orderCol).getValue() === orderId) {
+      sheet.getRange(i, statusCol).setValue(status);
+      break;
+    }
+  }
+}
+
+function getOrCreateSheet() {
+  const ss    = SpreadsheetApp.getActiveSpreadsheet();
+  let sheet   = ss.getSheetByName(SHEET_NAME);
+
+  if (!sheet) {
+    sheet = ss.insertSheet(SHEET_NAME);
+    sheet.appendRow(['Thời gian', 'Họ và tên', 'Email', 'Số điện thoại', 'Nghề nghiệp', 'Mã đơn', 'Thanh toán']);
+    sheet.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#6c47ff').setFontColor('#ffffff');
+    sheet.setFrozenRows(1);
+    sheet.setColumnWidths(1, 7, 160);
+  }
+
+  return sheet;
+}
+
+function jsonResponse(obj) {
+  return ContentService
+    .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
 function testWrite() {
-  var sheet = SpreadsheetApp.getActiveSheet();
-  sheet.appendRow([new Date(), 'Nguyễn Test', '0900000000', 'test@email.com', 'Kinh doanh', 'WSTEST01', 'Chờ thanh toán', '', '']);
+  const sheet = getOrCreateSheet();
+  sheet.appendRow([
+    new Date().toLocaleString('vi-VN'),
+    'Nguyễn Test', 'test@email.com', '0900000000', 'Kinh doanh',
+    'WS-TEST-001', 'Chờ thanh toán',
+  ]);
   Logger.log('✅ Ghi thành công!');
 }
