@@ -1,21 +1,12 @@
 // Workshop "Từ Ý Tưởng Thành Website" – Google Apps Script
-// Dán toàn bộ code này vào Apps Script Editor, sau đó Deploy lại → Web App
+// Bản cập nhật sửa lỗi Webhook SePay & Đồng bộ dữ liệu
 
 const SHEET_NAME = 'Đăng ký';
-const SEPAY_API  = 'https://pay.sepay.vn/v1/checkout/init';
-
-function getCreds() {
-  const props = PropertiesService.getScriptProperties();
-  return {
-    merchantId: props.getProperty('SEPAY_MERCHANT_ID'),
-    secretKey:  props.getProperty('SEPAY_SECRET_KEY'),
-  };
-}
 
 function doGet(e) {
   const p = e.parameter;
 
-  // ── CHECK PAYMENT STATUS (landing page polling) ──
+  // ── CHECK PAYMENT STATUS ──
   if (p.action === 'check') {
     const code = p.code || '';
     if (!code) return jsonResponse({paid: false});
@@ -38,14 +29,13 @@ function doGet(e) {
 }
 
 function doPost(e) {
+  const lock = LockService.getScriptLock();
   try {
-    if (e.postData.type === 'application/x-www-form-urlencoded') {
-      return handleFormSubmit(e.parameter);
-    }
+    lock.waitLock(10000);
 
     const data = JSON.parse(e.postData.contents);
 
-    if (data.transferType || data.content || data.notification_type === 'ORDER_PAID') {
+    if (data.gateway_content || data.transaction_content || data.content || data.notification_type === 'ORDER_PAID') {
       return handleSePayWebhook(data);
     }
     return handleRegistrationJson(data);
@@ -53,12 +43,13 @@ function doPost(e) {
   } catch (err) {
     Logger.log('doPost error: ' + err.toString());
     return jsonResponse({ result: 'error', message: err.toString() });
+  } finally {
+    lock.releaseLock();
   }
 }
 
-// ── Xử lý form submit: lưu sheet + trả JSON có code ──
 function handleFormSubmit(params) {
-  const orderId = 'WS' + (Math.floor(Math.random() * 900000) + 100000);
+  const orderId = 'WS' + Math.floor(100000 + Math.random() * 900000);
   const sheet   = getOrCreateSheet();
 
   sheet.appendRow([
@@ -76,7 +67,7 @@ function handleFormSubmit(params) {
 
 function handleRegistrationJson(data) {
   const sheet   = getOrCreateSheet();
-  const orderId = 'WS' + (Math.floor(Math.random() * 900000) + 100000);
+  const orderId = 'WS' + Math.floor(100000 + Math.random() * 900000);
 
   sheet.appendRow([
     new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }),
@@ -88,41 +79,48 @@ function handleRegistrationJson(data) {
     'Chờ thanh toán',
   ]);
 
-  return jsonResponse({ result: 'success' });
+  return jsonResponse({ result: 'success', code: orderId });
 }
 
 function handleSePayWebhook(data) {
-  const raw =
-    (data.content) ||
-    (data.code)    ||
+  const rawContent =
+    data.gateway_content ||
+    data.transaction_content ||
+    data.content ||
     (data.order && data.order.orderInvoiceNumber) ||
     '';
 
-  const match = raw.toString().match(/WS\d{6}/);
-  const orderId = match ? match[0] : null;
+  Logger.log('Nội dung nhận từ SePay: ' + rawContent);
+
+  const match   = rawContent.toString().match(/WS\d{6}/i);
+  const orderId = match ? match[0].toUpperCase() : null;
 
   if (orderId) {
-    updatePaymentStatus(orderId, 'Đã thanh toán ✅');
+    const isUpdated = updatePaymentStatus(orderId, 'Đã thanh toán ✅');
+    if (isUpdated) {
+      Logger.log('Cập nhật thành công: ' + orderId);
+      return jsonResponse({ result: 'success' });
+    } else {
+      Logger.log('Không tìm thấy mã đơn: ' + orderId);
+      return jsonResponse({ result: 'error', message: 'Mã đơn không tồn tại' });
+    }
   }
 
-  Logger.log('Webhook received: ' + JSON.stringify(data));
-  Logger.log('orderId extracted: ' + orderId);
-
-  return jsonResponse({ result: 'success' });
+  Logger.log('Không tìm thấy mã đơn trong: ' + rawContent);
+  return jsonResponse({ result: 'error', message: 'Không tìm thấy mã đơn' });
 }
 
 function updatePaymentStatus(orderId, status) {
-  const sheet     = getOrCreateSheet();
-  const lastRow   = sheet.getLastRow();
-  const orderCol  = 6;
-  const statusCol = 7;
+  const sheet = getOrCreateSheet();
+  const data  = sheet.getDataRange().getValues();
 
-  for (let i = 2; i <= lastRow; i++) {
-    if (sheet.getRange(i, orderCol).getValue() === orderId) {
-      sheet.getRange(i, statusCol).setValue(status);
-      break;
+  for (let i = 1; i < data.length; i++) {
+    if (data[i][5] && data[i][5].toString().trim().toUpperCase() === orderId.trim().toUpperCase()) {
+      sheet.getRange(i + 1, 7).setValue(status);
+      return true;
     }
   }
+  return false;
 }
 
 function getOrCreateSheet() {
@@ -144,14 +142,4 @@ function jsonResponse(obj) {
   return ContentService
     .createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
-}
-
-function testWrite() {
-  const sheet = getOrCreateSheet();
-  sheet.appendRow([
-    new Date().toLocaleString('vi-VN'),
-    'Nguyễn Test', 'test@email.com', '0900000000', 'Kinh doanh',
-    'WS-TEST-001', 'Chờ thanh toán',
-  ]);
-  Logger.log('✅ Ghi thành công!');
 }
