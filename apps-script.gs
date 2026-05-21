@@ -58,23 +58,43 @@ function handleFormSubmit(params) {
     'Chờ thanh toán',
   ]);
 
-  const checkoutUrl = createSePayOrder(orderId, params);
+  const bankId      = 'MB';
+  const accountNo   = '0901277034';
+  const accountName = 'BUI LE THAO VY';
+  const amount      = 1860000;
+  const qrUrl = 'https://img.vietqr.io/image/' + bankId + '-' + accountNo +
+    '-compact2.png?amount=' + amount +
+    '&addInfo=' + encodeURIComponent(orderId) +
+    '&accountName=' + encodeURIComponent(accountName);
 
-  if (checkoutUrl) {
-    return HtmlService.createHtmlOutput(
-      '<!DOCTYPE html><html><head>' +
-      '<meta http-equiv="refresh" content="0;url=' + checkoutUrl + '">' +
-      '</head><body>Đang chuyển sang trang thanh toán...</body></html>'
-    );
-  }
-
-  // Fallback nếu SePay chưa trả URL (môi trường test chưa kích hoạt)
   return HtmlService.createHtmlOutput(
-    '<!DOCTYPE html><html><body>' +
-    '<h2>✅ Đăng ký thành công!</h2>' +
-    '<p>Mã đơn: <strong>' + orderId + '</strong></p>' +
-    '<p>Chúng tôi sẽ liên hệ xác nhận thanh toán trong 24 giờ.</p>' +
-    '</body></html>'
+    '<!DOCTYPE html><html><head>' +
+    '<meta charset="UTF-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    '<title>Thanh toán Workshop</title>' +
+    '<style>' +
+    'body{font-family:sans-serif;text-align:center;padding:32px 16px;background:#f5f3ff;margin:0}' +
+    '.card{background:#fff;border-radius:20px;padding:32px 24px;max-width:420px;margin:0 auto;box-shadow:0 8px 32px rgba(108,71,255,.12)}' +
+    'h2{color:#6c47ff;margin-bottom:8px;font-size:1.4rem}' +
+    '.order-id{background:#ede9ff;color:#4b2fe0;padding:8px 16px;border-radius:8px;font-weight:700;font-size:1rem;display:inline-block;margin:12px 0}' +
+    'img{width:240px;height:240px;border-radius:12px;margin:16px 0}' +
+    '.info{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px;margin:16px 0;font-size:.9rem;color:#166534}' +
+    '.note{color:#6b7280;font-size:.82rem;margin-top:16px;line-height:1.6}' +
+    '</style></head><body>' +
+    '<div class="card">' +
+    '<div style="font-size:2.5rem">🎉</div>' +
+    '<h2>Đăng ký thành công!</h2>' +
+    '<p style="color:#6b7280;font-size:.9rem">Quét mã QR để thanh toán học phí</p>' +
+    '<div class="order-id">Mã đơn: ' + orderId + '</div>' +
+    '<img src="' + qrUrl + '" alt="QR thanh toán" />' +
+    '<div class="info">' +
+    '🏦 MBBank · ' + accountNo + '<br>' +
+    '👤 ' + accountName + '<br>' +
+    '💰 1.860.000đ<br>' +
+    '📝 Nội dung: <strong>' + orderId + '</strong>' +
+    '</div>' +
+    '<div class="note">⚠️ Vui lòng nhập đúng mã đơn vào nội dung chuyển khoản<br>để hệ thống tự động xác nhận thanh toán của bạn.</div>' +
+    '</div></body></html>'
   );
 }
 
