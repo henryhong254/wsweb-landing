@@ -127,14 +127,17 @@ function createSePayOrder(orderId, data) {
     muteHttpExceptions: true,
   });
 
-  const result = JSON.parse(response.getContentText());
+  const raw = response.getContentText();
+  Logger.log('SePay response: ' + raw);
 
-  // SePay trả về URL trang thanh toán
-  if (result && result.checkoutUrl) return result.checkoutUrl;
-  if (result && result.data && result.data.checkoutUrl) return result.data.checkoutUrl;
+  try {
+    const result = JSON.parse(raw);
+    if (result && result.checkoutUrl) return result.checkoutUrl;
+    if (result && result.data && result.data.checkoutUrl) return result.data.checkoutUrl;
+  } catch (e) {
+    Logger.log('SePay parse error: ' + e.toString());
+  }
 
-  // Fallback nếu API chưa rõ response format
-  Logger.log('SePay response: ' + response.getContentText());
   return null;
 }
 
