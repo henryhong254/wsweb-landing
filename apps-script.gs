@@ -42,9 +42,8 @@ function doPost(e) {
     return handleRegistrationJson(data);
 
   } catch (err) {
-    return HtmlService.createHtmlOutput(
-      '<h3>Có lỗi xảy ra: ' + err.toString() + '</h3>'
-    );
+    Logger.log('doPost error: ' + err.toString());
+    return jsonResponse({ result: 'error', message: err.toString() });
   }
 }
 
