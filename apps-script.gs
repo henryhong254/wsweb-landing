@@ -15,8 +15,10 @@ function getCreds() {
 
 // ── Nhận GET request từ landing page (form submit) ──
 function doGet(e) {
-  if (e.parameter && e.parameter.name) {
-    return handleFormSubmit(e.parameter);
+  const p = e.parameter;
+  // Chỉ lưu khi có đủ 3 trường bắt buộc: tên, email, SĐT
+  if (p && p.name && p.name.trim() && p.email && p.email.trim() && p.phone && p.phone.trim()) {
+    return handleFormSubmit(p);
   }
   return HtmlService.createHtmlOutput('<p>OK</p>');
 }
@@ -31,7 +33,10 @@ function doPost(e) {
 
     // JSON: webhook SePay hoặc fetch từ browser
     const data = JSON.parse(e.postData.contents);
-    if (data.notification_type === 'ORDER_PAID') {
+
+    // SePay bank monitoring webhook: có trường "content" (nội dung CK) và "transferType"
+    // SePay checkout IPN: có trường "notification_type"
+    if (data.transferType || data.content || data.notification_type === 'ORDER_PAID') {
       return handleSePayWebhook(data);
     }
     return handleRegistrationJson(data);
@@ -162,11 +167,27 @@ function createSePayOrder(orderId, data) {
 }
 
 // ── Xử lý webhook từ SePay khi khách thanh toán xong ──
+// SePay bank monitoring webhook gửi nội dung chuyển khoản trong trường "content"
+// Format: { content: "WS-1234567890", transferAmount: 10000, transferType: "in", ... }
 function handleSePayWebhook(data) {
-  const orderId = data.order && data.order.orderInvoiceNumber;
+  // Thử tất cả các trường có thể chứa mã đơn
+  const raw =
+    (data.content)                          ||  // bank monitoring webhook
+    (data.code)                             ||  // một số phiên bản SePay
+    (data.order && data.order.orderInvoiceNumber) || // checkout IPN
+    '';
+
+  // Tìm chuỗi "WS-<timestamp>" trong nội dung chuyển khoản
+  const match = raw.toString().match(/WS-\d+/);
+  const orderId = match ? match[0] : null;
+
   if (orderId) {
     updatePaymentStatus(orderId, 'Đã thanh toán ✅');
   }
+
+  Logger.log('Webhook received: ' + JSON.stringify(data));
+  Logger.log('orderId extracted: ' + orderId);
+
   return jsonResponse({ result: 'success' });
 }
 
