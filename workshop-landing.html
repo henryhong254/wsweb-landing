@@ -726,7 +726,8 @@
           </form>
         </div>
 
-        <div class="form-success" id="formSuccess">
+        <!-- Bước 1: hiện QR chờ thanh toán -->
+        <div class="form-success" id="formSuccess" style="display:none">
           <div class="success-icon">🎉</div>
           <h4>Đăng ký thành công!</h4>
           <p style="color:#6b7280;font-size:.88rem;margin-bottom:12px">Quét mã QR bên dưới để thanh toán học phí</p>
@@ -735,6 +736,14 @@
           <img id="qrImg" src="" alt="QR thanh toán" style="width:220px;height:220px;border-radius:12px;margin:8px 0" />
           <div id="bankInfo" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px;margin:12px 0;font-size:.85rem;color:#166534;line-height:1.8;text-align:left"></div>
           <p style="color:#9ca3af;font-size:.78rem;margin-top:8px">⚠️ Nhập đúng mã đơn vào nội dung chuyển khoản để hệ thống tự xác nhận</p>
+          <p id="checkingStatus" style="color:#6b7280;font-size:.82rem;margin-top:10px">⏳ Đang chờ xác nhận thanh toán...</p>
+        </div>
+
+        <!-- Bước 2: đã thanh toán xong -->
+        <div id="paidSuccess" style="display:none;text-align:center;padding:32px 16px">
+          <div style="font-size:3rem">✅</div>
+          <h4 style="color:#16a34a;margin:12px 0 8px;font-size:1.3rem">Thanh toán thành công!</h4>
+          <p style="color:#6b7280;font-size:.9rem">Cảm ơn bạn đã đăng ký. Kiểm tra email để nhận thông tin chi tiết về workshop.</p>
         </div>
       </div>
     </div>
@@ -871,32 +880,55 @@
     };
 
     btn.textContent = 'Đang xử lý...';
+    btn.disabled = true;
 
-    // Tạo mã đơn ngay trên trang
-    const orderId = 'WS-' + Date.now();
-    payload.orderId = orderId;
+    try {
+      // Gửi lên Apps Script, nhận lại code từ server
+      const res  = await fetch(APPS_SCRIPT_URL + '?' + new URLSearchParams(payload).toString());
+      const data = await res.json();
 
-    // Gửi lên Apps Script lưu Sheet (no-cors, không cần đọc response)
-    fetch(APPS_SCRIPT_URL + '?' + new URLSearchParams(payload).toString(), {
-      method: 'GET', mode: 'no-cors'
-    }).catch(() => {});
+      if (!data.success || !data.code) {
+        btn.textContent = 'Đăng ký ngay';
+        btn.disabled = false;
+        alert('Có lỗi xảy ra, vui lòng thử lại.');
+        return;
+      }
 
-    // Hiện QR ngay trên trang — không cần chờ response
-    const qrUrl = 'https://img.vietqr.io/image/MB-0901277034-compact2.png'
-      + '?amount=10000'
-      + '&addInfo=' + encodeURIComponent(orderId)
-      + '&accountName=' + encodeURIComponent('BUI LE THAO VY');
+      const code = data.code;
+      const qrUrl = 'https://img.vietqr.io/image/MB-0901277034-compact2.png'
+        + '?amount=1860000'
+        + '&addInfo=' + encodeURIComponent(code)
+        + '&accountName=' + encodeURIComponent('BUI LE THAO VY');
 
-    document.getElementById('orderIdBox').textContent = 'Mã đơn: ' + orderId;
-    document.getElementById('qrImg').src = qrUrl;
-    document.getElementById('bankInfo').innerHTML =
-      '🏦 MBBank · 0901277034<br>' +
-      '👤 BUI LE THAO VY<br>' +
-      '💰 1.860.000đ<br>' +
-      '📝 Nội dung: <strong>' + orderId + '</strong>';
+      document.getElementById('orderIdBox').textContent = 'Mã đơn: ' + code;
+      document.getElementById('qrImg').src = qrUrl;
+      document.getElementById('bankInfo').innerHTML =
+        '🏦 MBBank · 0901277034<br>' +
+        '👤 BUI LE THAO VY<br>' +
+        '💰 1.860.000đ<br>' +
+        '📝 Nội dung: <strong>' + code + '</strong>';
 
-    document.getElementById('formBody').style.display = 'none';
-    document.getElementById('formSuccess').style.display = 'block';
+      document.getElementById('formBody').style.display = 'none';
+      document.getElementById('formSuccess').style.display = 'block';
+
+      // Poll mỗi 5 giây để kiểm tra thanh toán
+      const pollInterval = setInterval(async () => {
+        try {
+          const r = await fetch(APPS_SCRIPT_URL + '?action=check&code=' + code);
+          const d = await r.json();
+          if (d.paid) {
+            clearInterval(pollInterval);
+            document.getElementById('formSuccess').style.display = 'none';
+            document.getElementById('paidSuccess').style.display = 'block';
+          }
+        } catch(_) {}
+      }, 5000);
+
+    } catch(err) {
+      btn.textContent = 'Đăng ký ngay';
+      btn.disabled = false;
+      alert('Không kết nối được, vui lòng thử lại.');
+    }
   });
 </script>
 

@@ -1,239 +1,139 @@
 // Workshop "Từ Ý Tưởng Thành Website" – Google Apps Script
-// Dán toàn bộ code này vào Apps Script Editor, sau đó Deploy lại → Web App
 
-const SHEET_NAME = 'Đăng ký';
-const SEPAY_API  = 'https://pay.sepay.vn/v1/checkout/init';
+var TELEGRAM_TOKEN   = '8427417613:AAEFwBt2TCpTqzi16QEFh3piLkmcV2WTp-Q';
+var TELEGRAM_CHAT_ID = '1086190321';
+var RESEND_API_KEY   = 're_7deuF8gG_6ZpmDfMqjsq1SXCGEMiQxkbi';
 
-// ── Đọc credentials từ Script Properties (an toàn, không lộ trong code) ──
-function getCreds() {
-  const props = PropertiesService.getScriptProperties();
-  return {
-    merchantId: props.getProperty('SEPAY_MERCHANT_ID'),
-    secretKey:  props.getProperty('SEPAY_SECRET_KEY'),
-  };
-}
-
-// ── Nhận GET request từ landing page (form submit) ──
 function doGet(e) {
-  const p = e.parameter;
-  // Chỉ lưu khi có đủ 3 trường bắt buộc: tên, email, SĐT
-  if (p && p.name && p.name.trim() && p.email && p.email.trim() && p.phone && p.phone.trim()) {
-    return handleFormSubmit(p);
+  var action = e.parameter.action;
+
+  // ── CHECK PAYMENT STATUS (landing page polling) ──
+  if (action === 'check') {
+    var code = e.parameter.code || '';
+    if (!code) return json({paid: false});
+
+    var sheet = SpreadsheetApp.getActiveSheet();
+    var data  = sheet.getDataRange().getValues();
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][5] === code) {
+        return json({paid: data[i][6] === 'Đã thanh toán'});
+      }
+    }
+    return json({paid: false});
   }
-  return HtmlService.createHtmlOutput('<p>OK</p>');
+
+  // ── REGISTER ──
+  var name  = (e.parameter.name  || '').trim();
+  var phone = (e.parameter.phone || '').trim();
+  var email = (e.parameter.email || '').trim();
+  var job   = (e.parameter.job   || '').trim();
+
+  if (!name || !phone || !email) {
+    return json({error: 'missing fields'});
+  }
+
+  var code  = 'WS' + Math.random().toString(36).substring(2, 8).toUpperCase();
+  var sheet = SpreadsheetApp.getActiveSheet();
+  sheet.appendRow([new Date(), name, phone, email, job, code, 'Chờ thanh toán', '', '']);
+
+  sendTelegram('🔔 Đăng ký mới!\n👤 ' + name + '\n📱 ' + phone + '\n📧 ' + email + '\n🔖 ' + code);
+
+  return json({success: true, code: code});
 }
 
-// ── Nhận mọi POST request: từ form đăng ký HOẶC webhook SePay ──
 function doPost(e) {
   try {
-    // Form submit từ landing page (application/x-www-form-urlencoded)
-    if (e.postData.type === 'application/x-www-form-urlencoded') {
-      return handleFormSubmit(e.parameter);
+    var body   = JSON.parse(e.postData.contents);
+    var desc   = (body.description || body.content || '').toUpperCase();
+    var amount = body.transferAmount || body.amount || 0;
+    var time   = body.transactionDate || new Date().toISOString();
+
+    var match = desc.match(/WS[A-Z0-9]{6}/);
+    if (!match) return json({status: 'no match'});
+
+    var code  = match[0];
+    var sheet = SpreadsheetApp.getActiveSheet();
+    var data  = sheet.getDataRange().getValues();
+
+    for (var i = 1; i < data.length; i++) {
+      if (data[i][5] === code) {
+        sheet.getRange(i + 1, 7).setValue('Đã thanh toán');
+        sheet.getRange(i + 1, 8).setValue(time);
+        sheet.getRange(i + 1, 9).setValue(amount);
+
+        var name  = data[i][1];
+        var email = data[i][3];
+
+        sendTelegram('✅ Thanh toán mới!\n👤 ' + name + '\n📧 ' + email + '\n🔖 ' + code + '\n💰 ' + amount + 'đ');
+
+        if (email) {
+          sendConfirmEmail(String(email).trim(), String(name).trim(), String(code));
+        }
+        break;
+      }
     }
 
-    // JSON: webhook SePay hoặc fetch từ browser
-    const data = JSON.parse(e.postData.contents);
-
-    // SePay bank monitoring webhook: có trường "content" (nội dung CK) và "transferType"
-    // SePay checkout IPN: có trường "notification_type"
-    if (data.transferType || data.content || data.notification_type === 'ORDER_PAID') {
-      return handleSePayWebhook(data);
-    }
-    return handleRegistrationJson(data);
-
+    return json({status: 'ok'});
   } catch (err) {
     Logger.log('doPost error: ' + err.toString());
-    return jsonResponse({ result: 'error', message: err.toString() });
+    return json({error: err.toString()});
   }
 }
 
-// ── Xử lý form submit: lưu sheet + tạo đơn SePay + redirect ──
-function handleFormSubmit(params) {
-  const orderId = 'WS-' + Date.now();
-  const sheet   = getOrCreateSheet();
-
-  sheet.appendRow([
-    new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }),
-    params.name  || '',
-    params.email || '',
-    params.phone || '',
-    params.job   || '',
-    orderId,
-    'Chờ thanh toán',
-  ]);
-
-  const bankId      = 'MB';
-  const accountNo   = '0901277034';
-  const accountName = 'BUI LE THAO VY';
-  const amount      = 1860000;
-  const qrUrl = 'https://img.vietqr.io/image/' + bankId + '-' + accountNo +
-    '-compact2.png?amount=' + amount +
-    '&addInfo=' + encodeURIComponent(orderId) +
-    '&accountName=' + encodeURIComponent(accountName);
-
-  return HtmlService.createHtmlOutput(
-    '<!DOCTYPE html><html><head>' +
-    '<meta charset="UTF-8">' +
-    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-    '<title>Thanh toán Workshop</title>' +
-    '<style>' +
-    'body{font-family:sans-serif;text-align:center;padding:32px 16px;background:#f5f3ff;margin:0}' +
-    '.card{background:#fff;border-radius:20px;padding:32px 24px;max-width:420px;margin:0 auto;box-shadow:0 8px 32px rgba(108,71,255,.12)}' +
-    'h2{color:#6c47ff;margin-bottom:8px;font-size:1.4rem}' +
-    '.order-id{background:#ede9ff;color:#4b2fe0;padding:8px 16px;border-radius:8px;font-weight:700;font-size:1rem;display:inline-block;margin:12px 0}' +
-    'img{width:240px;height:240px;border-radius:12px;margin:16px 0}' +
-    '.info{background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px;margin:16px 0;font-size:.9rem;color:#166534}' +
-    '.note{color:#6b7280;font-size:.82rem;margin-top:16px;line-height:1.6}' +
-    '</style></head><body>' +
-    '<div class="card">' +
-    '<div style="font-size:2.5rem">🎉</div>' +
-    '<h2>Đăng ký thành công!</h2>' +
-    '<p style="color:#6b7280;font-size:.9rem">Quét mã QR để thanh toán học phí</p>' +
-    '<div class="order-id">Mã đơn: ' + orderId + '</div>' +
-    '<img src="' + qrUrl + '" alt="QR thanh toán" />' +
-    '<div class="info">' +
-    '🏦 MBBank · ' + accountNo + '<br>' +
-    '👤 ' + accountName + '<br>' +
-    '💰 1.860.000đ<br>' +
-    '📝 Nội dung: <strong>' + orderId + '</strong>' +
-    '</div>' +
-    '<div class="note">⚠️ Vui lòng nhập đúng mã đơn vào nội dung chuyển khoản<br>để hệ thống tự động xác nhận thanh toán của bạn.</div>' +
-    '</div></body></html>'
-  );
-}
-
-// ── Xử lý đăng ký qua JSON (dự phòng) ──
-function handleRegistrationJson(data) {
-  const sheet   = getOrCreateSheet();
-  const orderId = 'WS-' + Date.now(); // mã đơn hàng duy nhất
-
-  // Lưu vào sheet (cột Thanh toán để trống, sẽ cập nhật khi webhook về)
-  sheet.appendRow([
-    new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }),
-    data.name  || '',
-    data.email || '',
-    data.phone || '',
-    data.job   || '',
-    orderId,
-    'Chờ thanh toán',
-  ]);
-
-  // Tạo đơn hàng SePay
-  const checkoutUrl = createSePayOrder(orderId, data);
-
-  return jsonResponse({ result: 'success', checkoutUrl });
-}
-
-// ── Gọi SePay API tạo đơn hàng ──
-function createSePayOrder(orderId, data) {
-  const { merchantId, secretKey } = getCreds();
-
-  const payload = {
-    merchantId:         merchantId,
-    secretKey:          secretKey,
-    orderInvoiceNumber: orderId,
-    orderAmount:        1860000,
-    currency:           'VND',
-    operation:          'PURCHASE',
-    orderDescription:   'Workshop Tu Y Tuong Thanh Website - ' + (data.name || ''),
-    customerName:       data.name  || '',
-    customerEmail:      data.email || '',
-    customerPhone:      data.phone || '',
-    successUrl:         'https://workshop.example.com/thank-you', // đổi thành URL cảm ơn của bạn
-    cancelUrl:          'https://workshop.example.com/#register',
-    errorUrl:           'https://workshop.example.com/#register',
-  };
-
-  const response = UrlFetchApp.fetch(SEPAY_API, {
-    method:             'post',
-    contentType:        'application/json',
-    payload:            JSON.stringify(payload),
-    muteHttpExceptions: true,
-  });
-
-  const raw = response.getContentText();
-  Logger.log('SePay response: ' + raw);
+function sendConfirmEmail(toEmail, toName, orderCode) {
+  var html =
+    '<div style="font-family:Arial,sans-serif;font-size:15px;line-height:1.8;color:#222;max-width:600px;">' +
+    '<p>Chào <strong>' + toName + '</strong>,</p>' +
+    '<p>Chúc mừng bạn đã đăng ký thành công <strong>Workshop Từ Ý Tưởng Thành Website!</strong></p>' +
+    '<p>Chúng tôi đã nhận được thanh toán của bạn và xác nhận suất tham gia.</p>' +
+    '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">' +
+    '<p><strong>LỊCH TRÌNH WORKSHOP</strong></p>' +
+    '<p>📅 3 – 5 tháng 7, 2025<br>' +
+    '💻 Online + Offline tại TP.HCM</p>' +
+    '<p>Thông tin chi tiết sẽ được gửi qua email và Group Zalo trước ngày khai giảng.</p>' +
+    '<hr style="border:none;border-top:1px solid #eee;margin:24px 0;">' +
+    '<p>Hẹn gặp bạn tại Workshop! 🎓</p>' +
+    '<p>Trân trọng,<br><strong>Hồng Thiên Ý</strong><br>Sáng Lập Founder\'s North</p>' +
+    '</div>';
 
   try {
-    const result = JSON.parse(raw);
-    if (result && result.checkoutUrl) return result.checkoutUrl;
-    if (result && result.data && result.data.checkoutUrl) return result.data.checkoutUrl;
-  } catch (e) {
-    Logger.log('SePay parse error: ' + e.toString());
-  }
-
-  return null;
-}
-
-// ── Xử lý webhook từ SePay khi khách thanh toán xong ──
-// SePay bank monitoring webhook gửi nội dung chuyển khoản trong trường "content"
-// Format: { content: "WS-1234567890", transferAmount: 10000, transferType: "in", ... }
-function handleSePayWebhook(data) {
-  // Thử tất cả các trường có thể chứa mã đơn
-  const raw =
-    (data.content)                          ||  // bank monitoring webhook
-    (data.code)                             ||  // một số phiên bản SePay
-    (data.order && data.order.orderInvoiceNumber) || // checkout IPN
-    '';
-
-  // Tìm chuỗi "WS-<timestamp>" trong nội dung chuyển khoản
-  const match = raw.toString().match(/WS-\d+/);
-  const orderId = match ? match[0] : null;
-
-  if (orderId) {
-    updatePaymentStatus(orderId, 'Đã thanh toán ✅');
-  }
-
-  Logger.log('Webhook received: ' + JSON.stringify(data));
-  Logger.log('orderId extracted: ' + orderId);
-
-  return jsonResponse({ result: 'success' });
-}
-
-// ── Tìm đơn theo orderId và cập nhật trạng thái thanh toán ──
-function updatePaymentStatus(orderId, status) {
-  const sheet     = getOrCreateSheet();
-  const lastRow   = sheet.getLastRow();
-  const orderCol  = 6; // cột F = mã đơn hàng
-  const statusCol = 7; // cột G = trạng thái
-
-  for (let i = 2; i <= lastRow; i++) {
-    if (sheet.getRange(i, orderCol).getValue() === orderId) {
-      sheet.getRange(i, statusCol).setValue(status);
-      break;
-    }
+    var response = UrlFetchApp.fetch('https://api.resend.com/emails', {
+      method: 'post',
+      contentType: 'application/json',
+      headers: {'Authorization': 'Bearer ' + RESEND_API_KEY},
+      payload: JSON.stringify({
+        from: 'Founders North <workshop@mail.foundersnorth.com.vn>',
+        to: [toEmail],
+        subject: '[Xác nhận] Chúc mừng bạn đã đăng ký Workshop Từ Ý Tưởng Thành Website! 🎉',
+        html: html
+      }),
+      muteHttpExceptions: true
+    });
+    sendTelegram('🟢 Email gửi: ' + response.getResponseCode());
+  } catch(err) {
+    sendTelegram('🔴 Lỗi email: ' + err.toString());
   }
 }
 
-// ── Tạo / lấy sheet, thêm header nếu chưa có ──
-function getOrCreateSheet() {
-  const ss    = SpreadsheetApp.getActiveSpreadsheet();
-  let sheet   = ss.getSheetByName(SHEET_NAME);
-
-  if (!sheet) {
-    sheet = ss.insertSheet(SHEET_NAME);
-    sheet.appendRow(['Thời gian', 'Họ và tên', 'Email', 'Số điện thoại', 'Nghề nghiệp', 'Mã đơn', 'Thanh toán']);
-    sheet.getRange(1, 1, 1, 7).setFontWeight('bold').setBackground('#6c47ff').setFontColor('#ffffff');
-    sheet.setFrozenRows(1);
-    sheet.setColumnWidths(1, 7, 160);
-  }
-
-  return sheet;
+function sendTelegram(msg) {
+  UrlFetchApp.fetch('https://api.telegram.org/bot' + TELEGRAM_TOKEN + '/sendMessage', {
+    method: 'post',
+    contentType: 'application/json',
+    payload: JSON.stringify({chat_id: TELEGRAM_CHAT_ID, text: msg})
+  });
 }
 
-function jsonResponse(obj) {
-  return ContentService
-    .createTextOutput(JSON.stringify(obj))
+function json(obj) {
+  return ContentService.createTextOutput(JSON.stringify(obj))
     .setMimeType(ContentService.MimeType.JSON);
 }
 
-// ── Test thủ công: chạy hàm này để kiểm tra ghi sheet ──
+function testTelegram() {
+  sendTelegram('✅ Test từ Workshop Apps Script – hoạt động rồi!');
+}
+
 function testWrite() {
-  const sheet = getOrCreateSheet();
-  sheet.appendRow([
-    new Date().toLocaleString('vi-VN'),
-    'Nguyễn Test', 'test@email.com', '0900000000', 'Kinh doanh',
-    'WS-TEST-001', 'Chờ thanh toán',
-  ]);
+  var sheet = SpreadsheetApp.getActiveSheet();
+  sheet.appendRow([new Date(), 'Nguyễn Test', '0900000000', 'test@email.com', 'Kinh doanh', 'WSTEST01', 'Chờ thanh toán', '', '']);
   Logger.log('✅ Ghi thành công!');
 }
