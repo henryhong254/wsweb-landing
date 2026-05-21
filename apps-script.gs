@@ -13,6 +13,14 @@ function getCreds() {
   };
 }
 
+// ── Nhận GET request từ landing page (form submit) ──
+function doGet(e) {
+  if (e.parameter && e.parameter.name) {
+    return handleFormSubmit(e.parameter);
+  }
+  return HtmlService.createHtmlOutput('<p>OK</p>');
+}
+
 // ── Nhận mọi POST request: từ form đăng ký HOẶC webhook SePay ──
 function doPost(e) {
   try {

@@ -866,20 +866,10 @@
       timestamp: new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
     };
 
-    // Tạo form ẩn POST trực tiếp lên Apps Script → tránh hoàn toàn CORS
+    // Chuyển hướng GET với data trong URL → Apps Script đọc e.parameter
     btn.textContent = 'Đang xử lý...';
-    const hiddenForm = document.createElement('form');
-    hiddenForm.method = 'POST';
-    hiddenForm.action = APPS_SCRIPT_URL;
-
-    Object.entries(payload).forEach(([key, val]) => {
-      const inp = document.createElement('input');
-      inp.type = 'hidden'; inp.name = key; inp.value = val;
-      hiddenForm.appendChild(inp);
-    });
-
-    document.body.appendChild(hiddenForm);
-    hiddenForm.submit();
+    const params = new URLSearchParams(payload);
+    window.location.href = APPS_SCRIPT_URL + '?' + params.toString();
   });
 </script>
 
