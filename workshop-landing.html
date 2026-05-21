@@ -729,8 +729,12 @@
         <div class="form-success" id="formSuccess">
           <div class="success-icon">🎉</div>
           <h4>Đăng ký thành công!</h4>
-          <p>Chúng tôi đã nhận được thông tin của bạn.<br>
-          Sẽ liên hệ xác nhận trong vòng <strong>24 giờ</strong>.</p>
+          <p style="color:#6b7280;font-size:.88rem;margin-bottom:12px">Quét mã QR bên dưới để thanh toán học phí</p>
+          <div id="orderIdBox" style="background:#ede9ff;color:#4b2fe0;padding:8px 16px;border-radius:8px;font-weight:700;font-size:.95rem;display:inline-block;margin-bottom:14px"></div>
+          <br>
+          <img id="qrImg" src="" alt="QR thanh toán" style="width:220px;height:220px;border-radius:12px;margin:8px 0" />
+          <div id="bankInfo" style="background:#f0fdf4;border:1px solid #bbf7d0;border-radius:10px;padding:12px;margin:12px 0;font-size:.85rem;color:#166534;line-height:1.8;text-align:left"></div>
+          <p style="color:#9ca3af;font-size:.78rem;margin-top:8px">⚠️ Nhập đúng mã đơn vào nội dung chuyển khoản để hệ thống tự xác nhận</p>
         </div>
       </div>
     </div>
@@ -866,10 +870,33 @@
       timestamp: new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
     };
 
-    // Chuyển hướng GET với data trong URL → Apps Script đọc e.parameter
     btn.textContent = 'Đang xử lý...';
-    const params = new URLSearchParams(payload);
-    window.location.href = APPS_SCRIPT_URL + '?' + params.toString();
+
+    // Tạo mã đơn ngay trên trang
+    const orderId = 'WS-' + Date.now();
+    payload.orderId = orderId;
+
+    // Gửi lên Apps Script lưu Sheet (no-cors, không cần đọc response)
+    fetch(APPS_SCRIPT_URL + '?' + new URLSearchParams(payload).toString(), {
+      method: 'GET', mode: 'no-cors'
+    }).catch(() => {});
+
+    // Hiện QR ngay trên trang — không cần chờ response
+    const qrUrl = 'https://img.vietqr.io/image/MB-0901277034-compact2.png'
+      + '?amount=1860000'
+      + '&addInfo=' + encodeURIComponent(orderId)
+      + '&accountName=' + encodeURIComponent('BUI LE THAO VY');
+
+    document.getElementById('orderIdBox').textContent = 'Mã đơn: ' + orderId;
+    document.getElementById('qrImg').src = qrUrl;
+    document.getElementById('bankInfo').innerHTML =
+      '🏦 MBBank · 0901277034<br>' +
+      '👤 BUI LE THAO VY<br>' +
+      '💰 1.860.000đ<br>' +
+      '📝 Nội dung: <strong>' + orderId + '</strong>';
+
+    document.getElementById('formBody').style.display = 'none';
+    document.getElementById('formSuccess').style.display = 'block';
   });
 </script>
 
