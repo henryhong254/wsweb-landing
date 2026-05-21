@@ -30,7 +30,7 @@ function doGet(e) {
 
   var code  = 'WS' + Math.random().toString(36).substring(2, 8).toUpperCase();
   var sheet = SpreadsheetApp.getActiveSheet();
-  sheet.appendRow([new Date(), name, phone, email, job, code, 'Chờ thanh toán', '', '']);
+  sheet.appendRow([new Date(), name, email, phone, job, code, 'Chờ thanh toán', '', '']);
 
   return json({success: true, code: code});
 }
