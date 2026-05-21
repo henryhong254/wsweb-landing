@@ -58,7 +58,7 @@ function doPost(e) {
 
 // ── Xử lý form submit: lưu sheet + trả JSON có code ──
 function handleFormSubmit(params) {
-  const orderId = 'WS' + Date.now();
+  const orderId = 'WS' + (Math.floor(Math.random() * 900000) + 100000);
   const sheet   = getOrCreateSheet();
 
   sheet.appendRow([
@@ -76,7 +76,7 @@ function handleFormSubmit(params) {
 
 function handleRegistrationJson(data) {
   const sheet   = getOrCreateSheet();
-  const orderId = 'WS' + Date.now();
+  const orderId = 'WS' + (Math.floor(Math.random() * 900000) + 100000);
 
   sheet.appendRow([
     new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' }),
@@ -98,7 +98,7 @@ function handleSePayWebhook(data) {
     (data.order && data.order.orderInvoiceNumber) ||
     '';
 
-  const match = raw.toString().match(/WS\d+/);
+  const match = raw.toString().match(/WS\d{6}/);
   const orderId = match ? match[0] : null;
 
   if (orderId) {
