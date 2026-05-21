@@ -866,30 +866,20 @@
       timestamp: new Date().toLocaleString('vi-VN', { timeZone: 'Asia/Ho_Chi_Minh' })
     };
 
-    try {
-      btn.textContent = 'Đang tạo đơn hàng...';
-      const res  = await fetch(APPS_SCRIPT_URL, {
-        method: 'POST',
-        headers: { 'Content-Type': 'text/plain' },
-        body: JSON.stringify(payload)
-      });
-      const json = await res.json();
+    // Tạo form ẩn POST trực tiếp lên Apps Script → tránh hoàn toàn CORS
+    btn.textContent = 'Đang xử lý...';
+    const hiddenForm = document.createElement('form');
+    hiddenForm.method = 'POST';
+    hiddenForm.action = APPS_SCRIPT_URL;
 
-      if (json.result === 'success' && json.checkoutUrl) {
-        // Redirect sang trang thanh toán SePay
-        btn.textContent = 'Đang chuyển sang trang thanh toán...';
-        window.location.href = json.checkoutUrl;
-      } else {
-        // Apps Script nhận được nhưng SePay chưa trả URL (môi trường test)
-        document.getElementById('formBody').style.display = 'none';
-        document.getElementById('formSuccess').style.display = 'block';
-      }
-    } catch (err) {
-      serverErr.style.display = 'block';
-      serverErr.textContent = 'Có lỗi xảy ra: ' + err.message + '. Vui lòng thử lại.';
-      btn.disabled = false;
-      btn.textContent = 'Đăng ký giữ chỗ →';
-    }
+    Object.entries(payload).forEach(([key, val]) => {
+      const inp = document.createElement('input');
+      inp.type = 'hidden'; inp.name = key; inp.value = val;
+      hiddenForm.appendChild(inp);
+    });
+
+    document.body.appendChild(hiddenForm);
+    hiddenForm.submit();
   });
 </script>
 
